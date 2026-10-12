@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any, Callable
 
 from bleak import BleakClient
@@ -45,6 +46,10 @@ from .commands import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# Two of a Surplife light's ~5 minute advertisement refresh cycles: long enough
+# for its advertisement to have caught up with a command.
+SURPLIFE_ADV_HOLD_SECONDS = 600
 
 
 class LEDNetWFDevice:
@@ -126,6 +131,9 @@ class LEDNetWFDevice:
         self._advertised_product_id: int | None = None
         # Manual protocol override: None = auto, "telink" or "segment" force it.
         self._iotbt_protocol_override: str | None = None
+        # Until this monotonic time, advertised state is ignored on Surplife
+        # scene lights - see _surplife_adv_is_stale().
+        self._adv_hold_until: float = 0.0
 
         # Callbacks for state updates
         self._callbacks: list[Callable[[], None]] = []
@@ -927,6 +935,8 @@ class LEDNetWFDevice:
         )
 
         self._is_on = is_on
+        # The device's own reply outranks whatever it is still advertising.
+        self._hold_advertised_state()
 
         # Segment IOTBT devices report their LED configuration in this response:
         #   payload[16]    = segment count
@@ -1448,6 +1458,7 @@ class LEDNetWFDevice:
             packet = protocol.build_power_command_0x3B(turn_on=True)
         if await self._send_command(packet):
             self._is_on = True
+            self._hold_advertised_state()
             self._notify_callbacks()
             return True
         return False
@@ -1464,6 +1475,7 @@ class LEDNetWFDevice:
             packet = protocol.build_power_command_0x3B(turn_on=False)
         if await self._send_command(packet):
             self._is_on = False
+            self._hold_advertised_state()
             self._notify_callbacks()
             return True
         return False
@@ -2301,6 +2313,27 @@ class LEDNetWFDevice:
             return True
         return False
 
+    def _hold_advertised_state(self) -> None:
+        """Stop advertisements overriding state we have just set or read."""
+        self._adv_hold_until = time.monotonic() + SURPLIFE_ADV_HOLD_SECONDS
+
+    def _surplife_adv_is_stale(self) -> bool:
+        """Return True while a Surplife advertisement cannot be trusted.
+
+        Product 0xC5 refreshes its advertised state only every ~5 minutes, and
+        what it publishes lags the real state by up to a cycle: after a
+        power-off its own EA 81 reply says OFF while the next refresh still
+        says ON. Trusting that switched the entity back on minutes after the
+        lights went dark. So for SURPLIFE_ADV_HOLD_SECONDS after a power
+        command or an EA 81 reply - both ground truth - advertised state is
+        ignored; after that it is current again, which keeps changes made from
+        the Surplife app visible.
+        """
+        if not self.is_surplife_scene or time.monotonic() >= self._adv_hold_until:
+            return False
+        _LOGGER.debug("[%s] Ignoring advertised state (within hold)", self._name)
+        return True
+
     def update_from_advertisement(
         self,
         manu_data: dict[int, bytes],
@@ -2411,6 +2444,9 @@ class LEDNetWFDevice:
             unified_color=self.uses_color_v2,
         )
         if not result:
+            return False
+
+        if self._surplife_adv_is_stale():
             return False
 
         changed = False
