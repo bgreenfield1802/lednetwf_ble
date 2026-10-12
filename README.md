@@ -11,7 +11,9 @@
 >   effect commands, but accept the Surplife app's own `0xE1 0x21` scene command
 >   (cmd_family `0x0a`). `surplife.py` provides 29 app-captured scenes (palettes from
 >   [rabidpaperclip/magichome2-ble](https://github.com/rabidpaperclip/magichome2-ble))
->   plus four extra palettes, and is used for product 197 only.
+>   plus fourteen extra palettes (bedroom moods, weather skies, daily cues and four
+  short alerts), and is used for product 197 only. The `Alert *` effects always
+  run at a fixed fast speed and leave the remembered effect speed untouched.
 > - **Power-on**: `light.turn_on` always sends power-on before colour/effect. The
 >   stock behaviour skipped it whenever `is_on` was already true, and on these
 >   devices a stale scan-response power byte can hold `is_on` true for minutes after

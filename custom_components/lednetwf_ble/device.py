@@ -1874,7 +1874,10 @@ class LEDNetWFDevice:
         self, effect_name: str, speed: int | None, brightness: int | None
     ) -> bool:
         """Send a Surplife E1 21 scene (see surplife.py)."""
-        if speed is None:
+        fixed_speed = surplife.SURPLIFE_FIXED_SPEED.get(effect_name)
+        if fixed_speed is not None:
+            speed = fixed_speed
+        elif speed is None:
             speed = self._effect_speed if self._effect_speed > 0 else 80
         if brightness is None or brightness <= 0:
             brightness = self._brightness if self._brightness else 255
@@ -1887,7 +1890,8 @@ class LEDNetWFDevice:
                       effect_name, speed, brightness_pct)
         if await self._send_command(protocol.wrap_command(raw, cmd_family=0x0A)):
             self._effect = effect_name
-            self._effect_speed = speed
+            if fixed_speed is None:
+                self._effect_speed = speed
             self._brightness = brightness
             self._notify_callbacks()
             return True

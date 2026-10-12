@@ -54,6 +54,29 @@ SURPLIFE_EFFECTS: dict[str, tuple[int, list[tuple[int, int, int]]]] = {
     'Ember Breathe': (0x0B, [(5, 100, 100), (14, 100, 100)]),
     'Ocean Drift': (0x20, [(120, 100, 100), (135, 100, 100), (104, 100, 100)]),
     'Twilight Drift': (0x20, [(135, 100, 100), (176, 100, 100), (228, 80, 100)]),
+    # Weather skies, run in place of the curve colour on wet days.
+    'Sky Rain': (0x20, [(128, 65, 100), (135, 50, 100), (120, 55, 100)]),
+    'Sky Storm': (0x0F, [(160, 80, 100), (150, 85, 100), (165, 70, 100), (0, 0, 100)]),
+    'Sky Snow': (0x0F, [(112, 30, 100), (0, 0, 100), (123, 45, 100)]),
+    # Daily cues.
+    'Wake Sunrise': (0x20, [(5, 100, 100), (18, 100, 100), (30, 70, 100)]),
+    'Wind Down': (0x0B, [(0, 100, 100), (4, 100, 100)]),
+    'Welcome Home': (0x0F, [(23, 100, 100), (30, 60, 100), (14, 100, 100)]),
+    # Short alerts - a pulse against white so each reads as an event, not a mood.
+    'Alert Doorbell': (0x1A, [(33, 100, 100), (0, 0, 100)]),
+    'Alert Dishwasher': (0x1A, [(112, 100, 100), (0, 0, 100)]),
+    'Alert Laundry': (0x1A, [(195, 100, 100), (0, 0, 100)]),
+    'Alert Weather': (0x1A, [(0, 100, 100), (20, 100, 100)]),
+}
+
+# Effects that always run at their own speed, whatever the effect-speed setting.
+# An alert has to be unmistakable at any configured speed, and it must not
+# overwrite the remembered speed the next effect is sent with.
+SURPLIFE_FIXED_SPEED: dict[str, int] = {
+    'Alert Doorbell': 90,
+    'Alert Dishwasher': 90,
+    'Alert Laundry': 90,
+    'Alert Weather': 90,
 }
 
 
