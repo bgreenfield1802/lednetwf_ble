@@ -6,6 +6,7 @@ from __future__ import annotations
 
 import asyncio
 import logging
+import time
 from typing import Any, Callable
 
 from bleak import BleakClient
@@ -45,6 +46,10 @@ from .commands import (
 )
 
 _LOGGER = logging.getLogger(__name__)
+
+# How long after a power command a contradicting state reply is taken to be
+# the answer to an earlier command rather than the device's current state.
+POWER_REPLY_GRACE_SECONDS = 2.0
 
 
 class LEDNetWFDevice:
@@ -130,6 +135,9 @@ class LEDNetWFDevice:
         # state query it last prompted - see _surplife_adv_prompts_query().
         self._last_manu_sig: tuple | None = None
         self._adv_query_task: asyncio.Task | None = None
+        # (power state, monotonic time) of the last power command sent - see
+        # _parse_device_state2_response().
+        self._last_power_cmd: tuple[bool, float] | None = None
 
         # Callbacks for state updates
         self._callbacks: list[Callable[[], None]] = []
@@ -930,7 +938,22 @@ class LEDNetWFDevice:
             address, mode, "ON" if is_on else "OFF"
         )
 
-        self._is_on = is_on
+        # A reply that contradicts a power command sent moments ago is the
+        # device answering an earlier command: an off gets no reply of its own,
+        # so in an on-then-off a few hundred ms apart the on's reply (ON) lands
+        # after the off and would switch the entity back on.
+        cmd = self._last_power_cmd
+        if (
+            cmd is not None
+            and is_on != cmd[0]
+            and time.monotonic() - cmd[1] < POWER_REPLY_GRACE_SECONDS
+        ):
+            _LOGGER.debug(
+                "[%s] Ignoring power in a reply that predates the last power command",
+                self._name,
+            )
+        else:
+            self._is_on = is_on
 
         # Segment IOTBT devices report their LED configuration in this response:
         #   payload[16]    = segment count
@@ -1450,6 +1473,7 @@ class LEDNetWFDevice:
             packet = protocol.build_iotbt_power_command(turn_on=True)
         else:
             packet = protocol.build_power_command_0x3B(turn_on=True)
+        self._last_power_cmd = (True, time.monotonic())
         if await self._send_command(packet):
             self._is_on = True
             self._notify_callbacks()
@@ -1466,6 +1490,7 @@ class LEDNetWFDevice:
             packet = protocol.build_iotbt_power_command(turn_on=False)
         else:
             packet = protocol.build_power_command_0x3B(turn_on=False)
+        self._last_power_cmd = (False, time.monotonic())
         if await self._send_command(packet):
             self._is_on = False
             self._notify_callbacks()
