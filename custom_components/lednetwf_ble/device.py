@@ -50,6 +50,9 @@ _LOGGER = logging.getLogger(__name__)
 # How long after a power command a contradicting state reply is taken to be
 # the answer to an earlier command rather than the device's current state.
 POWER_REPLY_GRACE_SECONDS = 2.0
+# Surplife state replies arriving this soon after a colour/scene command are
+# the device answering it - see _surplife_track_reply().
+SURPLIFE_SETTLE_SECONDS = 2.0
 
 
 class LEDNetWFDevice:
@@ -138,6 +141,16 @@ class LEDNetWFDevice:
         # (power state, monotonic time) of the last power command sent - see
         # _parse_device_state2_response().
         self._last_power_cmd: tuple[bool, float] | None = None
+        # Surplife scene lights blink on every colour or scene command, even one
+        # identical to what they already show, and a power-on sent first makes a
+        # colour change blink harder. So: whether the device's own last state
+        # reply said ON (never HA's optimistic state), and the last colour/scene
+        # command it was sent, so an identical resend can be skipped - see
+        # _send_surplife_state().
+        self._surplife_reply_on: bool = False
+        self._surplife_shown: bytes | None = None
+        self._surplife_shown_sig: bytes | None = None
+        self._surplife_sent_at: float = 0.0
 
         # Callbacks for state updates
         self._callbacks: list[Callable[[], None]] = []
@@ -954,6 +967,8 @@ class LEDNetWFDevice:
             )
         else:
             self._is_on = is_on
+            if self.is_surplife_scene:
+                self._surplife_track_reply(is_on, bytes(data[7:14]))
 
         # Segment IOTBT devices report their LED configuration in this response:
         #   payload[16]    = segment count
@@ -1463,6 +1478,50 @@ class LEDNetWFDevice:
 
     # ----- Public command methods -----
 
+    @property
+    def power_on_needed(self) -> bool:
+        """Whether a colour/effect change must be preceded by a power-on.
+
+        Always, except on a Surplife scene light whose own last state reply
+        said ON: a colour command alone does not wake these lights, but a
+        redundant power-on visibly blinks them. HA's optimistic state is never
+        trusted for this - only the device's reply.
+        """
+        return not (self.is_surplife_scene and self._surplife_reply_on and self._is_on)
+
+    def _surplife_track_reply(self, is_on: bool, sig: bytes) -> None:
+        """Record a Surplife state reply for power_on_needed / _send_surplife_state.
+
+        Replies within SURPLIFE_SETTLE_SECONDS of a colour/scene command are
+        the device answering it (the last one wins); a later reply that
+        differs means the state changed elsewhere (the Surplife app, a power
+        cut), so the cached command no longer describes what is shown.
+        """
+        self._surplife_reply_on = is_on
+        if not is_on:
+            self._surplife_shown = None
+            return
+        if time.monotonic() - self._surplife_sent_at < SURPLIFE_SETTLE_SECONDS:
+            self._surplife_shown_sig = sig
+        elif self._surplife_shown_sig is not None and sig != self._surplife_shown_sig:
+            _LOGGER.debug("[%s] State changed outside HA, forgetting last command", self._name)
+            self._surplife_shown = None
+            self._surplife_shown_sig = None
+
+    async def _send_surplife_state(self, packet: bytearray) -> bool:
+        """Send a Surplife colour/scene command unless it is already showing."""
+        key = bytes(packet[:1]) + bytes(packet[2:])  # byte 1 is the sequence number
+        if self._surplife_reply_on and key == self._surplife_shown:
+            _LOGGER.debug("[%s] Already showing this, not resending", self._name)
+            return True
+        self._surplife_sent_at = time.monotonic()
+        self._surplife_shown_sig = None
+        if await self._send_command(packet):
+            self._surplife_shown = key
+            return True
+        self._surplife_shown = None
+        return False
+
     async def turn_on(self) -> bool:
         """Turn on the device."""
         if self.is_iotbt_segment:
@@ -1491,6 +1550,8 @@ class LEDNetWFDevice:
         else:
             packet = protocol.build_power_command_0x3B(turn_on=False)
         self._last_power_cmd = (False, time.monotonic())
+        self._surplife_reply_on = False
+        self._surplife_shown = None
         if await self._send_command(packet):
             self._is_on = False
             self._notify_callbacks()
@@ -1645,7 +1706,8 @@ class LEDNetWFDevice:
         # Observed in issue #99: repeated "set blue" on a green light only
         # nudged blue 0 -> 16 -> 28 and never arrived. Brightness belongs in
         # the scaled RGB above, which is what the device stores anyway.
-        if await self._send_command(packet):
+        send = self._send_surplife_state if self.is_surplife_scene else self._send_command
+        if await send(packet):
             self._rgb = rgb
             self._brightness = brightness
             self._effect = None  # Clear effect when setting color
@@ -1873,25 +1935,22 @@ class LEDNetWFDevice:
     async def _set_surplife_effect(
         self, effect_name: str, speed: int | None, brightness: int | None
     ) -> bool:
-        """Send a Surplife E1 21 scene (see surplife.py)."""
-        fixed_speed = surplife.SURPLIFE_FIXED_SPEED.get(effect_name)
-        if fixed_speed is not None:
-            speed = fixed_speed
-        elif speed is None:
-            speed = self._effect_speed if self._effect_speed > 0 else 80
+        """Send a Surplife E1 21 scene (see surplife.py).
+
+        Each effect carries its own designed speed, so the speed argument and
+        the effect-speed setting are ignored for these lights.
+        """
         if brightness is None or brightness <= 0:
             brightness = self._brightness if self._brightness else 255
         brightness_pct = max(1, round(brightness * 100 / 255))
-        raw = surplife.build_scene_payload(effect_name, speed, brightness_pct)
+        raw = surplife.build_scene_payload(effect_name, brightness_pct)
         if raw is None:
             _LOGGER.warning("Unknown effect: %s", effect_name)
             return False
-        _LOGGER.debug("Setting Surplife scene: %s, speed=%d, brightness=%d%%",
-                      effect_name, speed, brightness_pct)
-        if await self._send_command(protocol.wrap_command(raw, cmd_family=0x0A)):
+        _LOGGER.debug("Setting Surplife scene: %s, brightness=%d%%",
+                      effect_name, brightness_pct)
+        if await self._send_surplife_state(protocol.wrap_command(raw, cmd_family=0x0A)):
             self._effect = effect_name
-            if fixed_speed is None:
-                self._effect_speed = speed
             self._brightness = brightness
             self._notify_callbacks()
             return True
