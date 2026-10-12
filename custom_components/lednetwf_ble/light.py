@@ -235,9 +235,13 @@ class LEDNetWFLight(LightEntity):
         """Turn the light on."""
         _LOGGER.debug("turn_on called with kwargs: %s", kwargs)
 
-        # Ensure light is on
-        if not self._device.is_on:
-            await self._device.turn_on()
+        # Ensure light is on. Always send power-on
+        # first, rather than only when is_on is False. On IOTBT devices
+        # HA merges advertisement data, so a power byte from an old scan
+        # response can hold is_on True for minutes after the light went off -
+        # and a colour command alone does not wake the light, so the gated
+        # version silently did nothing.
+        await self._device.turn_on()
 
         # Determine brightness
         brightness = kwargs.get(ATTR_BRIGHTNESS)

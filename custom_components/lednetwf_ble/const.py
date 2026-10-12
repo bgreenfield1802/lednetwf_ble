@@ -33,7 +33,13 @@ IOTBT_PROTOCOL_V3: Final = "v3"
 # colour_data_v3 / switch_led_v3 / protocol common2_0 in the vendor app's
 # ble_devices.json, and confirmed on hardware to ignore the Telink 0xE2 colour
 # command while accepting 0xE0 0x01. Source: PR #101.
-IOTBT_V3_PRODUCT_IDS: Final = frozenset({62})
+#
+# Product 197 (0xC5): Surplife-app string lights (sold as Dazzle Bright, IOTBT*).
+# Auto-detects as segment from flags2, but silently ignores the segment 0xE1 0x03
+# colour command; accepts 0xE0 0x01 and echoes hue/sat/value back in the EA 81
+# state reply (bytes 11-13). Its effects use the Surplife E1 21 scene command,
+# see surplife.py.
+IOTBT_V3_PRODUCT_IDS: Final = frozenset({62, 197})
 IOTBT_PROTOCOL_CHOICES: Final = (
     IOTBT_PROTOCOL_AUTO,
     IOTBT_PROTOCOL_TELINK,

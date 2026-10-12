@@ -35,6 +35,7 @@ from .const import (
     IOTBT_V3_PRODUCT_IDS,
 )
 from . import protocol
+from . import surplife
 from .capabilities import CAPABILITIES
 from .commands import (
     build_command,
@@ -266,8 +267,15 @@ class LEDNetWFDevice:
         return EffectType(val) if isinstance(val, int) else val
 
     @property
+    def is_surplife_scene(self) -> bool:
+        """Device takes the Surplife app's E1 21 scene command."""
+        return self._advertised_product_id in surplife.SURPLIFE_SCENE_PRODUCT_IDS
+
+    @property
     def effect_list(self) -> list[str]:
         """Return list of available effects."""
+        if self.is_surplife_scene:
+            return list(surplife.SURPLIFE_EFFECTS)
         return get_effect_list(
             self.effect_type, self.has_bg_color, self.has_ic_config,
             self.has_builtin_mic, self.has_candle_mode
@@ -1721,6 +1729,9 @@ class LEDNetWFDevice:
             speed: Effect speed 0-100 (or None to use current)
             brightness: Brightness 0-255 (or None to use current)
         """
+        if self.is_surplife_scene:
+            return await self._set_surplife_effect(effect_name, speed, brightness)
+
         if not self.has_effects:
             _LOGGER.warning("Device %s does not support effects", self._name)
             return False
@@ -1823,6 +1834,29 @@ class LEDNetWFDevice:
         )
 
         if await self._send_command(packet):
+            self._effect = effect_name
+            self._effect_speed = speed
+            self._brightness = brightness
+            self._notify_callbacks()
+            return True
+        return False
+
+    async def _set_surplife_effect(
+        self, effect_name: str, speed: int | None, brightness: int | None
+    ) -> bool:
+        """Send a Surplife E1 21 scene (see surplife.py)."""
+        if speed is None:
+            speed = self._effect_speed if self._effect_speed > 0 else 80
+        if brightness is None or brightness <= 0:
+            brightness = self._brightness if self._brightness else 255
+        brightness_pct = max(1, round(brightness * 100 / 255))
+        raw = surplife.build_scene_payload(effect_name, speed, brightness_pct)
+        if raw is None:
+            _LOGGER.warning("Unknown effect: %s", effect_name)
+            return False
+        _LOGGER.debug("Setting Surplife scene: %s, speed=%d, brightness=%d%%",
+                      effect_name, speed, brightness_pct)
+        if await self._send_command(protocol.wrap_command(raw, cmd_family=0x0A)):
             self._effect = effect_name
             self._effect_speed = speed
             self._brightness = brightness

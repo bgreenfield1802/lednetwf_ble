@@ -1,5 +1,26 @@
 # LEDnetWF_ble
 
+> **Fork note.** This is a fork of [8none1/lednetwf_ble](https://github.com/8none1/lednetwf_ble)
+> adding support for **Surplife-app IOTBT string lights** (product ID 197 / 0xC5,
+> sold as e.g. *Dazzle Bright* 66ft 200-LED RGB string lights):
+>
+> - **Colour**: product 197 is auto-detected as the `v3` IOTBT family (`0xE0 0x01`).
+>   Auto-detection previously picked `segment`, whose colour command these lights
+>   silently ignore.
+> - **Effects**: these lights ignore both the segment (`0xE1 0x01`) and v3 (`0xE0 0x02`)
+>   effect commands, but accept the Surplife app's own `0xE1 0x21` scene command
+>   (cmd_family `0x0a`). `surplife.py` provides 29 app-captured scenes (palettes from
+>   [rabidpaperclip/magichome2-ble](https://github.com/rabidpaperclip/magichome2-ble))
+>   plus four extra palettes, and is used for product 197 only.
+> - **Power-on**: `light.turn_on` always sends power-on before colour/effect. The
+>   stock behaviour skipped it whenever `is_on` was already true, and on these
+>   devices a stale scan-response power byte can hold `is_on` true for minutes after
+>   the light went off — while a colour command alone does not wake the light.
+>
+> Every change was verified against the device's own `EA 81` state replies (power,
+> hue/saturation/value for colour, effect id and speed for scenes), not HA's
+> optimistic state.
+
 Home Assistant custom integration for LEDnetWF devices which use the Zengge Android or iPhone app. WIP
 
 ## Important note for upgraders

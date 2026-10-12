@@ -19,13 +19,13 @@
     "dependencies": [
         "bluetooth"
     ],
-    "documentation": "https://github.com/8none1/lednetwf_ble",
+    "documentation": "https://github.com/bgreenfield1802/lednetwf_ble",
     "integration_type": "device",
     "iot_class": "local_push",
-    "issue_tracker": "https://github.com/8none1/lednetwf_ble/issues",
+    "issue_tracker": "https://github.com/bgreenfield1802/lednetwf_ble/issues",
     "requirements": [
         "bleak-retry-connector>=1.17.1",
         "bleak>=0.17.0"
     ],
-    "version": "2.0.1-beta15"
+    "version": "2.0.1-beta15+surplife.1"
 }
