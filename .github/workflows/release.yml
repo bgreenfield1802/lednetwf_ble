@@ -13,6 +13,10 @@ on:
 jobs:
   release:
     runs-on: ubuntu-latest
+    # The fork's default GITHUB_TOKEN is read-only; this job pushes the
+    # manifest version bump to main and creates the release.
+    permissions:
+      contents: write
 
     steps:
       - name: Checkout
@@ -28,7 +32,10 @@ jobs:
             VERSION="${GITHUB_REF#refs/tags/v}"
           fi
           echo "version=$VERSION" >> $GITHUB_OUTPUT
-          if [[ "$VERSION" == *beta* ]]; then
+          # Fork versions carry upstream's base version (e.g. 2.0.1-beta15-surplife.1),
+          # so a plain *beta* match would mark every fork release a pre-release and
+          # HACS would hide it. Only a trailing -betaN / -rcN is a fork pre-release.
+          if [[ "$VERSION" =~ -(beta|rc)[0-9]*$ ]]; then
             echo "prerelease=true" >> $GITHUB_OUTPUT
             echo "latest=false" >> $GITHUB_OUTPUT
           else
